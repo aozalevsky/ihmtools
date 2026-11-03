@@ -25,6 +25,11 @@ pip install gemmi ihm
 Each script reads `data/` beside it and writes `data/assembled.cif`. One entry
 each, deliberately — these are worked examples, not general converters.
 
+Each directory has its own README that walks through the example step by
+step — inputs, the code for each IHMCIF category, the rows it writes, checks
+before upload, and what a real deposition adds: [`9A9W`](9A9W/README.md),
+[`9A8W`](9A8W/README.md), [`G_1000003`](G_1000003/README.md).
+
 ## The two assemble scripts
 
 They do the same job and are written to be read side by side. Everything that

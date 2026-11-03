@@ -80,9 +80,14 @@ for gemmi_entity in structure.entities:
     for subchain in gemmi_entity.subchains:
         asyms[subchain] = ihm.AsymUnit(entity, details=description, id=subchain)
 
+# crosslinks.csv identifies proteins by _entity.pdbx_description, hence this
+# map. It is not injective: both DNA strands are described "DNA 153-mer", so
+# one overwrites the other. No effect here (DSSO is amine-reactive and no
+# crosslink involves the DNA), but descriptions must be unique per entity.
 by_description = {e.description: e for e in entities.values()}
 by_chain = {a.id: a for a in asyms.values()}
 
+# CHANGE FOR YOUR ENTRY: title and authors.
 system = ihm.System(title="USP7 bound to a nucleosome/p53 complex")
 system.authors.extend(["Chakraborty, D.", "Kempf, G.", "Kater, L.",
                        "Cavadini, S.", "Thoma, N.H."])
@@ -117,6 +122,7 @@ representation = ihm.representation.Representation([
 # The data 9A9W was built from.
 # --------------------------------------------------------------------------
 
+# CHANGE FOR YOUR ENTRY: archive accession codes of the data used.
 crosslink_data = ihm.dataset.CXMSDataset(ihm.location.PRIDELocation("PXD054141"))
 em_data = ihm.dataset.EMDensityDataset(ihm.location.EMDBLocation("EMD-53517"))
 system.orphan_datasets.extend([
@@ -127,18 +133,44 @@ system.orphan_datasets.extend([
 ])
 
 # --------------------------------------------------------------------------
-# Crosslinks come in two layers, as they do in mmCIF.
+# Crosslinks, in the two layers that IHMCIF uses.
 #
-# crosslinks.csv is what the experiment measured: protein and residue, with no
-# idea which copy. restraints.csv is what the modelling actually restrained --
-# the chain pair, for the subset of measurements used. 9A9W measures 90 and
-# restrains 51 of them; the other 40 stay in the list and restrain nothing.
+# crosslinks.csv -> _ihm_cross_link_list: the identified crosslinks (unique
+# residue pairs from the crosslinking-MS search), defined on entities, without
+# chain assignment. In an entity present in several copies (histones x2,
+# p53 x4), an intra-protein crosslink is ambiguous between intra- and
+# inter-molecular, and a homomeric self-link (same residue on both peptides)
+# is inter-molecular but ambiguous as to which copies. 9A9W has 90: 39
+# inter-protein, 35 intra-protein in single-copy USP7, 14 intra-protein in
+# multi-copy entities, and 2 self-links (p53 K381, H4 K95).
+#
+# restraints.csv -> _ihm_cross_link_restraint: the chain-resolved restraints
+# used in modeling, keyed by crosslink id, one row per chain pair. Several
+# rows for one id form an ambiguous restraint. 9A9W has 51 rows (35 intra-,
+# 16 inter-molecular) from 50 crosslinks: self-link 23 is restrained on the
+# alternative copy pairs L-M and N-K. ResidueCrossLink(restrain_all=...)
+# records whether ANY or ALL alternatives must be satisfied
+# (conditional_crosslink_flag); it is not set here. The other 40 identified
+# crosslinks are not restrained; 25 of them have an endpoint outside the
+# modeled residues.
 # --------------------------------------------------------------------------
 
+# CHANGE FOR YOUR ENTRY: crosslinking reagent.
+# One reagent per CrossLinkRestraint; the linker column of crosslinks.csv is
+# not read. ChemDescriptor("DSSO") records only the name in
+# _ihm_chemical_component_descriptor; ihm.cross_linkers.dsso also supplies
+# SMILES and InChI (likewise .sda, .bs3, .dsbu, ...).
 crosslink_restraint = ihm.restraint.CrossLinkRestraint(
     dataset=crosslink_data, linker=ihm.ChemDescriptor("DSSO"))
 
-experimental = {}                              # measurement id -> link
+# residue1/residue2 are entity seq_ids (_entity_poly_seq.num, equal to
+# _atom_site.label_seq_id), not author residue numbers. In 9A9W
+# label_seq_id - auth_seq_id is +3 for the histones and DNA and +24 for p53
+# and USP7, so author-numbered input is shifted by a per-entity offset that
+# python-ihm does not detect. Map positions reported by the crosslink search
+# (database sequence numbering) onto the entity sequence; as a check, all 180
+# endpoints here fall on lysines, as expected for DSSO.
+experimental = {}                              # crosslink id -> link
 for row in csv.DictReader(open(CROSSLINKS)):
     link = ihm.restraint.ExperimentalCrossLink(
         by_description[row["protein1"]].residue(int(row["residue1"])),
@@ -146,6 +178,8 @@ for row in csv.DictReader(open(CROSSLINKS)):
     experimental[row["id"]] = link
     crosslink_restraint.experimental_cross_links.append([link])
 
+# CHANGE FOR YOUR ENTRY: one bound shared by every link. restraints.csv
+# has no per-link distance column -- add one if your links differ.
 distance = ihm.restraint.UpperBoundDistanceRestraint(30.0)
 for row in csv.DictReader(open(RESTRAINTS)):
     crosslink_restraint.cross_links.append(ihm.restraint.ResidueCrossLink(
@@ -153,6 +187,7 @@ for row in csv.DictReader(open(RESTRAINTS)):
         asym1=by_chain[row["chain1"]], asym2=by_chain[row["chain2"]],
         distance=distance))
 
+# CHANGE FOR YOUR ENTRY: 3DEM fitting method.
 em_restraint = ihm.restraint.EM3DRestraint(
     dataset=em_data, assembly=assembly, fitting_method="Flexible fitting")
 system.restraints.extend([crosslink_restraint, em_restraint])
@@ -161,6 +196,7 @@ system.restraints.extend([crosslink_restraint, em_restraint])
 # How the model was built.
 # --------------------------------------------------------------------------
 
+# CHANGE FOR YOUR ENTRY: the modeling steps and methods actually used.
 protocol = ihm.protocol.Protocol(name="Modeling")
 for name, method in [("Structure prediction", "AlphaFold2"),
                      ("Rigid body fitting", "Rigid body fitting"),
@@ -193,6 +229,9 @@ class Model(ihm.model.Model):
 
 model = Model(assembly=assembly, protocol=protocol,
               representation=representation, name="Best scoring model")
+# Required: _ihm_3dem_restraint is written only for models in
+# em_restraint.fits. Without this line the 3DEM restraint is omitted from the
+# file, without a warning.
 em_restraint.fits[model] = ihm.restraint.EM3DRestraintFit()
 
 system.state_groups.append(ihm.model.StateGroup(
@@ -210,3 +249,11 @@ print("%d entities, %d restraints, %d measurements, %d restrained"
       % (len(check.entities), len(check.restraints),
          sum(len(g) for g in crosslinks.experimental_cross_links),
          len(crosslinks.cross_links)))
+
+# Not written by this script but expected in a deposition: _software
+# (ihm.Software -> system.software), _citation (ihm.Citation ->
+# system.citations), reference sequences (_struct_ref, via
+# ihm.reference.UniProtSequence on each Entity) and starting models
+# (_ihm_starting_model_details, via ihm.startmodel.StartingModel). The
+# AlphaFold DB and PDB entries above are recorded only as input datasets,
+# without the per-chain starting-model mapping.
